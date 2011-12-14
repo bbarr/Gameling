@@ -1,9 +1,75 @@
-var Gummy = {};
+/**
+ *  Lightweight gaming framework.
+ *
+ *  @author Brendan Barr brendanbarr.web@gmail.com
+ */
 
-Gummy.Game = Constructor.extend(function(config) {
+// Ensure Object.create
+Object.create || (Object.create = function() {
+  var F = function() {};
+  return function(src) {
+    F.prototype = src;
+    F.prototype.constructor = F;
+    return new F;
+  }
+})();
+
+/**
+ *  Constructor factory to assist inheritence
+ *
+ *  @example 
+ *  var A = Constructor.extend(a_constructor_fn, a_proto_obj);
+ *  var a = new A;
+ *  var B = A.extend(b_constructor_fn, b_proto_obj); // inherits properties from A
+ *  var b = new B; 
+ */
+var Constructor = (function() {
+  
+  var extend,
+      Constructor;
+  
+  extend = function(to, from) {
+    for (var key in from) {
+      if (from.hasOwnProperty(key)) {
+        to[key] = from[key];
+      }
+    }
+  };
+  
+  Constructor = function() {};
+  
+  Constructor.extend = function(user_constructor, user_prototype) {
+
+    var self = this,
+        NewConstructor,
+        new_prototype = Object.create(this.prototype);
+
+    user_constructor || (user_constructor = function() {}),
+    user_prototype || (user_prototype = user_constructor.prototype || {});
+
+    NewConstructor = function() {
+      self.apply(this, arguments);
+      user_constructor.apply(this, arguments);
+    };
+    
+    extend(NewConstructor, this);
+    extend(new_prototype, user_prototype);
+
+    NewConstructor.prototype = new_prototype;
+
+    return NewConstructor;
+  };
+  
+  return Constructor;
+  
+})();
+
+var GL = {};
+
+GL.Game = Constructor.extend(function(config) {
   config || (config = {});
   this.el = config.el;
-  this.timer = new Gummy.Timer(config.fps || 30);
+  this.timer = new GL.Timer(config.fps || 30);
   this.paused = true;
   this.stages = {};
 }, {
@@ -11,28 +77,6 @@ Gummy.Game = Constructor.extend(function(config) {
   stage: function(id, piece) {
     var stage = this._ensure_stage(id);
     stage.add(piece);
-  },
-  
-  _ensure_stage: function(id) {
-    
-    var stage = this.stages[id];
-    if (!stage) { 
-      
-      var el = document.getElementById(id);
-      if (!el) {
-        el = document.createElement('canvas');
-        el.setAttribute('id', id);
-        el.height = this.el.getAttribute('height');
-        el.width = this.el.getAttribute('width');
-        this.el.appendChild(el);
-      }
-      
-      stage = new Gummy.Stage(el);
-      stage.game = game;
-      this.stages[stage.id] = stage;
-    }
-    
-    return stage;
   },
   
   start: function() {
@@ -66,16 +110,38 @@ Gummy.Game = Constructor.extend(function(config) {
     }, 1000 / timer.interval);
   },
 
+  _ensure_stage: function(id) {
+    
+    var stage = this.stages[id];
+    if (!stage) { 
+      
+      var el = document.getElementById(id);
+      if (!el) {
+        el = document.createElement('canvas');
+        el.setAttribute('id', id);
+        el.height = this.el.getAttribute('height');
+        el.width = this.el.getAttribute('width');
+        this.el.appendChild(el);
+      }
+      
+      stage = new GL.Stage(el);
+      stage.game = game;
+      this.stages[stage.id] = stage;
+    }
+    
+    return stage;
+  }
+
 });
 
-Gummy.Stage = function(canvas) {
+GL.Stage = function(canvas) {
   this.canvas = canvas;
   this.id = canvas.id;
   this.ctx = canvas.getContext('2d');
   this.pieces = [];
 };
 
-Gummy.Stage.prototype = {
+GL.Stage.prototype = {
   
   tick: function(coeff) {
     this.pieces.forEach(function(p) { p.tick(coeff); });
@@ -111,7 +177,7 @@ Gummy.Stage.prototype = {
   }
 };
 
-Gummy.Piece = Constructor.extend(function() {
+GL.Piece = Constructor.extend(function() {
 
 }, {
 
@@ -125,12 +191,12 @@ Gummy.Piece = Constructor.extend(function() {
   generate_id: function() {
     var i = 0;    
     return function() {
-      return 'piece_' + (i++);
+      return i++;
     }
   }()
 });
 
-Gummy.Timer = function(ideal_fps) {
+GL.Timer = function(ideal_fps) {
   
   this.ideal_fps = ideal_fps;
   
@@ -144,7 +210,7 @@ Gummy.Timer = function(ideal_fps) {
   this.reset();
 };
 
-Gummy.Timer.prototype = {
+GL.Timer.prototype = {
   
   pause: function() {
     this.paused = true;
@@ -179,12 +245,12 @@ Gummy.Timer.prototype = {
   }
 };
 
-Gummy.Vector = function(x, y) {
+GL.Vector = function(x, y) {
   this.x = x || 0;
   this.y = y || 0;
 }
 
-Gummy.Vector.prototype = {
+GL.Vector.prototype = {
 
   add: function(v) {
     this.x += v.x;
@@ -227,7 +293,7 @@ Gummy.Vector.prototype = {
   },
 
   clone: function() {
-    return new Gummy.Vector(this.x, this.y);
+    return new GL.Vector(this.x, this.y);
   },
 
   get_length: function() {
@@ -249,7 +315,7 @@ Gummy.Vector.prototype = {
   },
   
   get_difference: function(v) {
-    return new Gummy.Vector(this.x - v.x, this.y - v.y);
+    return new GL.Vector(this.x - v.x, this.y - v.y);
   },
   
   to_string: function() {
