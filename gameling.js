@@ -72,6 +72,7 @@ GL.Game = Constructor.extend(function(config) {
   this.timer = new GL.Timer(config.fps || 30);
   this.paused = true;
   this.stages = {};
+  this.pieces = []; // for aggregations and other times when its nice having them togehter
 }, {
   
   stage: function(id, piece) {
@@ -107,7 +108,17 @@ GL.Game = Constructor.extend(function(config) {
 
     window.setTimeout(function() {
       self.tick();
-    }, 1000 / timer.interval);
+    }, timer.interval);
+  },
+
+  influence: function(piece) {
+    this.pieces.forEach(function(other_piece) {
+      if (piece.id === other_piece.id) return;
+      other_piece.influences.forEach(function(influence) {
+        if (influence.detect && !influence.detect.call(other_piece, piece)) return;
+        influence.affect.call(other_piece, piece);
+      });
+    });
   },
 
   _ensure_stage: function(id) {
@@ -125,7 +136,7 @@ GL.Game = Constructor.extend(function(config) {
       }
       
       stage = new GL.Stage(el);
-      stage.game = game;
+      stage.game = this;
       this.stages[stage.id] = stage;
     }
     
@@ -149,6 +160,7 @@ GL.Stage.prototype = {
   
   add: function(piece) {
     piece.stage = this;
+    this.game.pieces.push(piece);
     this.pieces.push(piece);
   },
 
@@ -178,7 +190,8 @@ GL.Stage.prototype = {
 };
 
 GL.Piece = Constructor.extend(function() {
-
+  this.influences = [];
+  this.id = this.generate_id();
 }, {
 
   //override
@@ -193,7 +206,12 @@ GL.Piece = Constructor.extend(function() {
     return function() {
       return i++;
     }
-  }()
+  }(),
+
+  influence: function() {
+    
+  }
+
 });
 
 GL.Timer = function(ideal_fps) {
@@ -270,6 +288,10 @@ GL.Vector.prototype = {
     return this;
   },
 
+  dot: function(v) {
+    return (this.x * v.x) + (this.y * v.y);
+  },
+
   reverse: function() {
     this.x *= -1;
     this.y *= -1;
@@ -314,6 +336,10 @@ GL.Vector.prototype = {
     return Math.atan2(diff.y, diff.x);
   },
   
+  get_own_angle: function() {
+    return (new GL.Vector(0, 0)).get_angle_to(this);
+  },
+  
   get_difference: function(v) {
     return new GL.Vector(this.x - v.x, this.y - v.y);
   },
@@ -323,3 +349,53 @@ GL.Vector.prototype = {
   }
 
 };
+
+/**
+ *  Some standard influences
+ *  Needs support for regions
+ */
+
+GL.GRAVITY = {
+  affect: function(p) {
+    
+    var difference = this.position.get_difference(p.position),
+        length = difference.get_length(),
+        range = this.size * 4;
+
+    if (length > range) return;
+    
+    var scale = 1 - (length / range),
+        gravity = difference.clone();
+        
+    gravity
+      .normalize()
+      .scale(scale);
+
+    p.velocity.add(gravity);
+  }
+};
+
+GL.COLLISIONS = {
+  
+  detect: function(o) {
+    var diff = this.position.get_difference(o.position);
+    return diff.get_length() <= (this.size + o.size);
+  },
+  
+  affect: function(o) {
+    
+    var diff = this.position.get_difference(o.position).normalize(),
+        this_tangent = this.velocity.clone().dot(diff),
+        o_tangent = o.velocity.clone().dot(diff);
+
+    this.velocity
+      .add(diff.clone().scale(o_tangent - this_tangent).scale(o.size / this.size))
+      .scale(this.elasticity);
+      
+    o.velocity
+      .add(diff.clone().scale(this_tangent - o_tangent).scale(this.size / o.size))
+      .scale(this.elasticity);
+  }
+};
+
+GL.BOUNDRIES = {};
