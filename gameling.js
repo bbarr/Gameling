@@ -4,15 +4,17 @@
  *  @author Brendan Barr brendanbarr.web@gmail.com
  */
 
-// Ensure Object.create
+// namespace
+var GL = {};
+
+// ensure Object.create
 Object.create || (Object.create = function() {
   var F = function() {};
   return function(src) {
     F.prototype = src;
-    F.prototype.constructor = F;
     return new F;
   }
-})();
+}());
 
 /**
  *  Constructor factory to assist inheritence
@@ -23,61 +25,117 @@ Object.create || (Object.create = function() {
  *  var B = A.extend(b_constructor_fn, b_proto_obj); // inherits properties from A
  *  var b = new B; 
  */
-var Constructor = (function() {
-  
-  var extend,
-      Constructor;
-  
-  extend = function(to, from) {
-    for (var key in from) {
+GL.Constructor = function() {};
+
+GL.Constructor.extend = function(user_constructor, user_prototype) {
+
+	var self = this,
+	    NewConstructor,
+	    new_prototype = Object.create(this.prototype),
+			extend = GL.util.extend;
+
+	user_constructor || (user_constructor = function() {}),
+	user_prototype || (user_prototype = user_constructor.prototype || {});
+
+	NewConstructor = function() {
+	  self.apply(this, arguments);
+	  user_constructor.apply(this, arguments);
+	};
+
+	extend(NewConstructor, this);
+	extend(new_prototype, user_prototype);
+
+	NewConstructor.prototype = new_prototype;
+
+	return NewConstructor;
+};
+
+// standardize requestAnimationFrame
+window.requestAnimationFrame = window.requestAnimationFrame || 
+                               window.webkitRequestAnimationFrame || 
+                               window.mozRequestAnimationFrame || 
+                               window.oRequestAnimationFrame || 
+                               window.msRequestAnimationFrame;
+
+GL.util = {
+	
+	generate_id: function() {
+		var id = 0;
+		return function() {
+			return (id++).toString();
+		}
+	}(),
+	
+	extend: function(to, from) {
+		for (var key in from) {
       if (from.hasOwnProperty(key)) {
         to[key] = from[key];
       }
     }
-  };
-  
-  Constructor = function() {};
-  
-  Constructor.extend = function(user_constructor, user_prototype) {
+	}
+};
 
-    var self = this,
-        NewConstructor,
-        new_prototype = Object.create(this.prototype);
+GL.Base = GL.Constructor.extend(function() {
+	this._events = {};
+}, {
 
-    user_constructor || (user_constructor = function() {}),
-    user_prototype || (user_prototype = user_constructor.prototype || {});
+	subscribe: function(name, cb, scope) {
+		var _events = this._events;
+		if (typeof cb !== 'function') return;
+		cb.scope = scope;
+		(_events[name] || (_events[name] = [])).push(cb);
+	},
+	
+	publish: function(name, data) {
+		
+		var queue = this._events[name];
+		if (!queue) return;
+		
+		for (var i = 0, len = queue.length; i < len; i++) {
+			queue[i].call(queue[i].scope || this, data);
+		}
+	}
+});
 
-    NewConstructor = function() {
-      self.apply(this, arguments);
-      user_constructor.apply(this, arguments);
-    };
-    
-    extend(NewConstructor, this);
-    extend(new_prototype, user_prototype);
+GL.Container = GL.Base.extend(function() {
+	this.children = [];
+	this.children_keys = {};
+}, {
+	
+	add: function(child) {
+		child.id || (child.id = GL.util.generate_id());
+		child.parent = this;
+		this.children.push(child);
+		this.children_keys[child.id] = this.children.length - 1;
+		this.publish('added', child);
+	},
+	
+	remove: function(child) {
+		var id = typeof child === 'string' ? child : child.id,
+				index = this.children_keys[id];
+		this.children.splice(index, 1);
+		delete this.children_keys[id];
+		this.publish('removed', child);
+	},
+	
+	each: function(iterator) {
+		for (var i = 0, len = this.children.length; i < len; i++) {
+			iterator.call(this, this.children[i], i, this.children);			
+		}
+	}
+});
 
-    NewConstructor.prototype = new_prototype;
-
-    return NewConstructor;
-  };
-  
-  return Constructor;
-  
-})();
-
-var GL = {};
-
-GL.Game = Constructor.extend(function(config) {
-  config || (config = {});
-  this.el = config.el;
+GL.Game = GL.Container.extend(function(config) {
+	config || (config = {});
+  this.el = typeof config.el === 'string' ? document.getElementById(config.el) : config.el;
+	this.height = config.height;
+	this.width = config.width;
   this.timer = new GL.Timer(config.fps || 30);
   this.paused = true;
-  this.stages = {};
-  this.pieces = []; // for aggregations and other times when its nice having them togehter
 }, {
   
   stage: function(id, piece) {
-    var stage = this._ensure_stage(id);
-    stage.add(piece);
+    this._ensure_stage(id).add(piece);
   },
   
   start: function() {
@@ -91,53 +149,32 @@ GL.Game = Constructor.extend(function(config) {
   },
   
   tick: function() {
-      
-    if (this.paused) return;  
-      
-    var self = this,
-        timer = this.timer,
-        stages = this.stages,
-        key;
 
-    for (key in stages) {
-      stages[key]
-        .tick(timer.coefficient);
-    }
-    
-    timer.process();
-
-    window.setTimeout(function() {
-      self.tick();
-    }, timer.interval);
-  },
-
-  influence: function(piece) {
-    this.pieces.forEach(function(other_piece) {
-      if (piece.id === other_piece.id) return;
-      other_piece.influences.forEach(function(influence) {
-        if (influence.detect && !influence.detect.call(other_piece, piece)) return;
-        influence.affect.call(other_piece, piece);
-      });
-    });
+    this.tick = function() {
+			if (this.paused) return;
+			this.publish('tick');
+			this.timer.get_frame(this.tick);
+		}.bind(this);
+		
+		this.tick();
   },
 
   _ensure_stage: function(id) {
     
-    var stage = this.stages[id];
+    var stage = this.children[id];
     if (!stage) { 
       
       var el = document.getElementById(id);
       if (!el) {
         el = document.createElement('canvas');
         el.setAttribute('id', id);
-        el.height = this.el.getAttribute('height');
-        el.width = this.el.getAttribute('width');
+        el.height = this.height;
+        el.width = this.width;
         this.el.appendChild(el);
       }
       
       stage = new GL.Stage(el);
-      stage.game = this;
-      this.stages[stage.id] = stage;
+			this.add(stage);
     }
     
     return stage;
@@ -145,87 +182,41 @@ GL.Game = Constructor.extend(function(config) {
 
 });
 
-GL.Stage = function(canvas) {
-  this.canvas = canvas;
-  this.id = canvas.id;
-  this.ctx = canvas.getContext('2d');
-  this.pieces = [];
-};
+GL.Stage = GL.Container.extend(function(el) {
+  this.el = el;
+  this.id = el.getAttribute('id');
+  this.ctx = el.getContext('2d');
 
-GL.Stage.prototype = {
-  
-  tick: function(coeff) {
-    this.pieces.forEach(function(p) { p.tick(coeff); });
-  },
-  
-  add: function(piece) {
-    piece.stage = this;
-    this.game.pieces.push(piece);
-    this.pieces.push(piece);
-  },
+	this.subscribe('added', function(piece) {
+		piece.game = this.parent;
+		piece.publish('staged');
+	});
+	
+	this.subscribe('removed', function(piece) {
+		piece.game = null;		
+		piece.publish('unstaged');
+	});
+}, {});
 
-  remove: function(o) {
-    var found = this.find(o.id);
-    this.pieces.splice(found.index, 1);
-  },
+GL.Piece = GL.Base.extend(function() {
 
-  find: function(id) {
-    
-    var found = false;
-    
-    this.pieces.forEach(function(p, i) { 
-      if (p.id === id) {
-        
-        found = {
-          piece: p,
-          index: i
-        };
-        
-        return;
-      }
-    });
-    
-    return found;
-  }
-};
-
-GL.Piece = Constructor.extend(function() {
-  this.influences = [];
-  this.id = this.generate_id();
+	this.subscribe('staged', function() {
+		this.game.subscribe('tick', this.tick, this);
+	});
+	
+	this.subscribe('unstaged', function() {
+		this.game.unsubscribe('tick', this.tick, this);
+	});
+	
 }, {
-
-  //override
-  tick: function() {},
-  
-  destroy: function() {
-    this.stage.remove(this);
-  },
-  
-  generate_id: function() {
-    var i = 0;    
-    return function() {
-      return i++;
-    }
-  }(),
-
-  influence: function() {
-    
-  }
-
+ 
 });
 
 GL.Timer = function(ideal_fps) {
-  
   this.ideal_fps = ideal_fps;
-  
-  // aggregations, should not be reset
-  this.count = 0;
-  this.total_coefficient = 0;
-  this.total_fps = 0;
+	this.smooth = ideal_fps >= 30;
   this.interval = 1000 / ideal_fps;
-  
-  this.paused = true;
-  this.reset();
+	this.coefficient = 1;
 };
 
 GL.Timer.prototype = {
@@ -234,38 +225,35 @@ GL.Timer.prototype = {
     this.paused = true;
   },
   
-  reset: function() {
-    this.fps = 0;
-    this.average_fps = 0;
-    this.coefficient = 1;
-    this.average_coefficient = 0;
-    this.last_time = new Date().getTime();
-  },
-  
-  process: function() {
+	get_frame: function(cb) {
+		this._process();
+		if (this.smooth) {
+			window.requestAnimationFrame(cb)
+		}
+		else {
+			setTimeout(cb, this.interval * this.coeff);
+		}
+	},
+	
+	_process: function() {
     
     if (this.paused) {
-      this.reset();
-      this.paused = false;
+      this.coeff = 1;
       return;
     }
     
     var current_time = new Date().getTime(),
         elapsed = current_time - this.last_time,
-        fps = 1000 / elapsed,
-        coefficient = Math.round(this.ideal_fps / fps * 100) / 100;
+        fps = 1000 / elapsed;
 
     this.last_time = current_time;
-    this.count++;
-    this.total_fps += this.fps = fps;
-    this.total_coefficient += this.coefficient = coefficient;
-    this.elapsed = elapsed;
+		this.coeff = Math.round(this.ideal_fps / fps * 100) / 100;
   }
 };
 
-GL.Vector = function(x, y) {
-  this.x = x || 0;
-  this.y = y || 0;
+GL.Vector = function(set) {
+  this.x = set[0] || 0;
+  this.y = set[1] || 0;
 }
 
 GL.Vector.prototype = {
@@ -347,55 +335,4 @@ GL.Vector.prototype = {
   to_string: function() {
     return 'Vector: ' + this.x + ', ' + this.y;
   }
-
 };
-
-/**
- *  Some standard influences
- *  Needs support for regions
- */
-
-GL.GRAVITY = {
-  affect: function(p) {
-    
-    var difference = this.position.get_difference(p.position),
-        length = difference.get_length(),
-        range = this.size * 4;
-
-    if (length > range) return;
-    
-    var scale = 1 - (length / range),
-        gravity = difference.clone();
-        
-    gravity
-      .normalize()
-      .scale(scale);
-
-    p.velocity.add(gravity);
-  }
-};
-
-GL.COLLISIONS = {
-  
-  detect: function(o) {
-    var diff = this.position.get_difference(o.position);
-    return diff.get_length() <= (this.size + o.size);
-  },
-  
-  affect: function(o) {
-    
-    var diff = this.position.get_difference(o.position).normalize(),
-        this_tangent = this.velocity.clone().dot(diff),
-        o_tangent = o.velocity.clone().dot(diff);
-
-    this.velocity
-      .add(diff.clone().scale(o_tangent - this_tangent).scale(o.size / this.size))
-      .scale(this.elasticity);
-      
-    o.velocity
-      .add(diff.clone().scale(this_tangent - o_tangent).scale(this.size / o.size))
-      .scale(this.elasticity);
-  }
-};
-
-GL.BOUNDRIES = {};
