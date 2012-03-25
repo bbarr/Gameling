@@ -16,15 +16,7 @@ Object.create || (Object.create = function() {
   }
 }());
 
-/**
- *  Constructor factory to assist inheritence
- *
- *  @example 
- *  var A = Constructor.extend(a_constructor_fn, a_proto_obj);
- *  var a = new A;
- *  var B = A.extend(b_constructor_fn, b_proto_obj); // inherits properties from A
- *  var b = new B; 
- */
+//Constructor factory to assist inheritence
 GL.Constructor = function() {};
 
 GL.Constructor.extend = function(user_constructor, user_prototype) {
@@ -132,6 +124,7 @@ GL.Game = GL.Container.extend(function(config) {
 	this.width = config.width;
   this.timer = new GL.Timer(config.fps || 30);
   this.paused = true;
+	this._bind();
 }, {
   
   stage: function(id, piece) {
@@ -178,7 +171,18 @@ GL.Game = GL.Container.extend(function(config) {
     }
     
     return stage;
-  }
+  },
+
+	_bind: function() {
+		
+		var el = this.el,
+				events = [ 'click', 'mouseover', 'mouseout', 'keydown', 'keyup', 'keypress' ]
+				self = this
+		
+		events.forEach(function(event) {
+			el.addEventListener(event, function(e) { self.publish(event, e); })
+		});
+	}
 
 });
 
@@ -188,12 +192,14 @@ GL.Stage = GL.Container.extend(function(el) {
   this.ctx = el.getContext('2d');
 
 	this.subscribe('added', function(piece) {
+		piece.stage = this.parent;
 		piece.game = this.parent;
 		piece.publish('staged');
 	});
 	
 	this.subscribe('removed', function(piece) {
-		piece.game = null;		
+		piece.stage = null;		
+		piece.game = null;
 		piece.publish('unstaged');
 	});
 }, {});
@@ -202,10 +208,12 @@ GL.Piece = GL.Base.extend(function() {
 
 	this.subscribe('staged', function() {
 		this.game.subscribe('tick', this.tick, this);
+		this.game.subscribe('keydown', function() { this.publish('keydown') }, this);
 	});
 	
 	this.subscribe('unstaged', function() {
 		this.game.unsubscribe('tick', this.tick, this);
+		this.game.unsubscribe('keydown', function() { this.publish('keydown') }, this);
 	});
 	
 }, {
