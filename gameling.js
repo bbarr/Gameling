@@ -192,7 +192,7 @@ GL.Stage = GL.Container.extend(function(el) {
   this.ctx = el.getContext('2d');
 
 	this.subscribe('added', function(piece) {
-		piece.stage = this.parent;
+		piece.stage = this;
 		piece.game = this.parent;
 		piece.publish('staged');
 	});
