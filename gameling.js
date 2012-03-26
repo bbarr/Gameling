@@ -70,12 +70,19 @@ GL.util = {
 GL.Base = GL.Constructor.extend(function() {
 	this._events = {};
 }, {
+	
+	_ready_queue: [],
+	_ready: false,
 
 	subscribe: function(name, cb, scope) {
 		var _events = this._events;
 		if (typeof cb !== 'function') return;
 		cb.scope = scope;
 		(_events[name] || (_events[name] = [])).push(cb);
+	},
+	
+	unsubscribe: function() {
+		// implement
 	},
 	
 	publish: function(name, data) {
@@ -86,12 +93,24 @@ GL.Base = GL.Constructor.extend(function() {
 		for (var i = 0, len = queue.length; i < len; i++) {
 			queue[i].call(queue[i].scope || this, data);
 		}
+	},
+	
+	ready: function(cb) {
+		if (cb) {
+			if (this._ready) cb.call(this);
+			else this._ready_queue.push(cb.bind(this));
+		}
+		else {
+			this._ready = true;
+			while (this._ready_queue[0]) this._ready_queue.shift()();
+		}
 	}
 });
 
 GL.Container = GL.Base.extend(function() {
 	this.children = [];
 	this.children_keys = {};
+	this.class_name = 'Container';
 }, {
 	
 	add: function(child) {
@@ -99,7 +118,8 @@ GL.Container = GL.Base.extend(function() {
 		child.parent = this;
 		this.children.push(child);
 		this.children_keys[child.id] = this.children.length - 1;
-		this.publish('added', child);
+		child[this.class_name.toLowerCase()] = this;
+		if (this.parent) child[this.parent.class_name.toLowerCase()] = this.parent;
 	},
 	
 	remove: function(child) {
@@ -107,7 +127,8 @@ GL.Container = GL.Base.extend(function() {
 				index = this.children_keys[id];
 		this.children.splice(index, 1);
 		delete this.children_keys[id];
-		this.publish('removed', child);
+		child[this.class_name.toLowerCase()] = null;
+		if (this.parent) child[this.parent.class_name.toLowerCase()] = null;
 	},
 	
 	each: function(iterator) {
@@ -119,6 +140,7 @@ GL.Container = GL.Base.extend(function() {
 
 GL.Game = GL.Container.extend(function(config) {
 	config || (config = {});
+	this.class_name = 'Game';
   this.el = typeof config.el === 'string' ? document.getElementById(config.el) : config.el;
 	this.height = config.height;
 	this.width = config.width;
@@ -127,13 +149,14 @@ GL.Game = GL.Container.extend(function(config) {
 	this._bind();
 }, {
   
-  stage: function(id, piece) {
-    this._ensure_stage(id).add(piece);
+  stage: function(id, piece, Constructor) {
+    this._ensure_stage(id, Constructor).add(piece);
   },
   
   start: function() {
     this.paused = false;
     this.tick();
+		this.ready();
   },
   
   pause: function() {
@@ -152,9 +175,11 @@ GL.Game = GL.Container.extend(function(config) {
 		this.tick();
   },
 
-  _ensure_stage: function(id) {
-    
-    var stage = this.children[id];
+  _ensure_stage: function(id, Constructor) {
+
+    Constructor = Constructor || GL.Stage;
+
+    var stage = this.children[this.children_keys[id]];
     if (!stage) { 
       
       var el = document.getElementById(id);
@@ -166,7 +191,7 @@ GL.Game = GL.Container.extend(function(config) {
         this.el.appendChild(el);
       }
       
-      stage = new GL.Stage(el);
+      stage = new Constructor(el);
 			this.add(stage);
     }
     
@@ -176,11 +201,16 @@ GL.Game = GL.Container.extend(function(config) {
 	_bind: function() {
 		
 		var el = this.el,
-				events = [ 'click', 'mouseover', 'mouseout', 'keydown', 'keyup', 'keypress' ]
+				events = [ 'click', 'mouseover', 'mouseout' ],
+				window_events = [ 'keydown', 'keyup', 'keypress' ],
 				self = this
 		
 		events.forEach(function(event) {
 			el.addEventListener(event, function(e) { self.publish(event, e); })
+		});
+		
+		window_events.forEach(function(event) {
+			window.addEventListener(event, function(e) { self.publish(event, e); })
 		});
 	}
 
@@ -190,32 +220,14 @@ GL.Stage = GL.Container.extend(function(el) {
   this.el = el;
   this.id = el.getAttribute('id');
   this.ctx = el.getContext('2d');
-
-	this.subscribe('added', function(piece) {
-		piece.stage = this;
-		piece.game = this.parent;
-		piece.publish('staged');
-	});
-	
-	this.subscribe('removed', function(piece) {
-		piece.stage = null;		
-		piece.game = null;
-		piece.publish('unstaged');
-	});
+	this.class_name = 'Stage';	
 }, {});
 
 GL.Piece = GL.Base.extend(function() {
-
-	this.subscribe('staged', function() {
+	this.class_name = 'Piece';
+	this.ready(function() {
 		this.game.subscribe('tick', this.tick, this);
-		this.game.subscribe('keydown', function() { this.publish('keydown') }, this);
-	});
-	
-	this.subscribe('unstaged', function() {
-		this.game.unsubscribe('tick', this.tick, this);
-		this.game.unsubscribe('keydown', function() { this.publish('keydown') }, this);
-	});
-	
+	});	
 }, {
  
 });
@@ -293,6 +305,10 @@ GL.Vector.prototype = {
     this.y *= -1;
   },
 
+	is_flat: function() {
+		return !this.x && !this.y;
+	},
+
   normalize: function() {
     var len = this.get_length();
     if (len) {
@@ -311,7 +327,7 @@ GL.Vector.prototype = {
   },
 
   clone: function() {
-    return new GL.Vector(this.x, this.y);
+    return new GL.Vector([ this.x, this.y ]);
   },
 
   get_length: function() {
