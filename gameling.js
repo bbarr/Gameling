@@ -4,7 +4,6 @@
  *  @author Brendan Barr brendanbarr.web@gmail.com
  */
 
-// namespace
 var GL = {};
 
 GL.util = {
@@ -24,6 +23,40 @@ GL.util = {
     }
 	}
 };
+
+GL.events = {
+  
+  _events: {},
+
+	subscribe: function(name, cb, scope) {
+		cb.scope = scope || this;
+		(this._events[name] || (this._events[name] = [])).push(cb);
+	},
+	
+	unsubscribe: function(name, cb) {
+	  
+		var queue = this._events[name];
+		if (!queue) return;
+		
+		if (cb) {
+		  var index = queue.indexOf(cb);
+  		if (index > -1) queue.splice(index, 1); 
+		}
+		else {
+		  delete this._events[name];
+		}
+	},
+	
+	publish: function(name, data) {
+		
+		var queue = this._events[name];
+		if (!queue) return;
+		
+		for (var i = 0, len = queue.length; i < len; i++) {
+			queue[i].call(queue[i].scope, data);
+		}
+	}
+}
 
 GL.Game = function() {
   this.stages = [];
@@ -76,6 +109,8 @@ GL.Game.prototype = {
   }
 };
 
+GL.util.extend(GL.Game.prototype, GL.events);
+
 GL.Stage = function() {
   this.actors = [];
   this.actor_keys = {};
@@ -97,6 +132,8 @@ GL.Stage.protoype = {
   }
 };
 
+GL.util.extend(GL.Stage.prototype, GL.events);
+
 GL.Actor = function() {
   this.id = GL.util.generate_id();
 };
@@ -106,31 +143,7 @@ GL.Actor.prototype = {
   tick: function() {}
 };
 
-GL.Events = {
-  
-  _events: {},
-
-	subscribe: function(name, cb, scope) {
-		var _events = this._events;
-		if (typeof cb !== 'function') return;
-		cb.scope = scope;
-		(_events[name] || (_events[name] = [])).push(cb);
-	},
-	
-	unsubscribe: function() {
-		// implement
-	},
-	
-	publish: function(name, data) {
-		
-		var queue = this._events[name];
-		if (!queue) return;
-		
-		for (var i = 0, len = queue.length; i < len; i++) {
-			queue[i].call(queue[i].scope || this, data);
-		}
-	}
-};
+GL.util.extend(GL.Actor.prototype, GL.events);
 
 GL.Timer = function(ideal_fps) {
   this.ideal_fps = ideal_fps;
