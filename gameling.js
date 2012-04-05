@@ -7,48 +7,6 @@
 // namespace
 var GL = {};
 
-// ensure Object.create
-Object.create || (Object.create = function() {
-  var F = function() {};
-  return function(src) {
-    F.prototype = src;
-    return new F;
-  }
-}());
-
-//Constructor factory to assist inheritence
-GL.Constructor = function() {};
-
-GL.Constructor.extend = function(user_constructor, user_prototype) {
-
-	var self = this,
-	    NewConstructor,
-	    new_prototype = Object.create(this.prototype),
-			extend = GL.util.extend;
-
-	user_constructor || (user_constructor = function() {}),
-	user_prototype || (user_prototype = user_constructor.prototype || {});
-
-	NewConstructor = function() {
-	  self.apply(this, arguments);
-	  user_constructor.apply(this, arguments);
-	};
-
-	extend(NewConstructor, this);
-	extend(new_prototype, user_prototype);
-
-	NewConstructor.prototype = new_prototype;
-
-	return NewConstructor;
-};
-
-// standardize requestAnimationFrame
-window.requestAnimationFrame = window.requestAnimationFrame || 
-                               window.webkitRequestAnimationFrame || 
-                               window.mozRequestAnimationFrame || 
-                               window.oRequestAnimationFrame || 
-                               window.msRequestAnimationFrame;
-
 GL.util = {
 	
 	generate_id: function() {
@@ -67,12 +25,90 @@ GL.util = {
 	}
 };
 
-GL.Base = GL.Constructor.extend(function() {
-	this._events = {};
-}, {
-	
-	_ready_queue: [],
-	_ready: false,
+GL.Game = function() {
+  this.stages = [];
+  this.stage_keys = {};
+};
+
+GL.Game.prototype = {
+  
+  stage: function(name) {
+    var stage = this.stages[this.stage_keys[name]];
+    if (!stage) {
+      stage = this._create_stage(name);
+      this.stage_keys[name] = this.stages.push(stage);
+    }
+    return stage;
+  },
+  
+  run: function() {
+    this.paused = false;
+    this.tick();
+  },
+  
+  stop: function() {
+    this.paused = true;
+  },
+  
+  _tick: function() {
+    
+    this._tick = function() {
+      if (this.paused) return;
+      for (var i = 0, len = this.stages.length; i < len; i++) this.stages[i].tick();
+      window.requestAnimationFrame(this._tick);
+    }.bind(this);
+    
+    this.tick();
+  },
+  
+  _create_stage: function(name) {
+    
+    var el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement('canvas');
+      el.setAttribute('id', id);
+      el.height = this.height;
+      el.width = this.width;
+      this.el.appendChild(el);
+    }
+
+    return new Constructor(el);
+  }
+};
+
+GL.Stage = function() {
+  this.actors = [];
+  this.actor_keys = {};
+};
+
+GL.Stage.protoype = {
+  
+  tick: function() {
+    for (var i = 0, len = this.actors.length; i < len; i++) this.actors[i].tick();
+  },
+  
+  cast: function(actor) {
+    if (this.actor_keys[actor.id]) return;
+    this.actor_keys[actor.id] = this.actors.push(actor);
+  },
+  
+  actor: function(id) {
+    return this.actors[this.actor_keys[id]];
+  }
+};
+
+GL.Actor = function() {
+  this.id = GL.util.generate_id();
+};
+
+GL.Actor.prototype = {
+  
+  tick: function() {}
+};
+
+GL.Events = {
+  
+  _events: {},
 
 	subscribe: function(name, cb, scope) {
 		var _events = this._events;
@@ -93,144 +129,8 @@ GL.Base = GL.Constructor.extend(function() {
 		for (var i = 0, len = queue.length; i < len; i++) {
 			queue[i].call(queue[i].scope || this, data);
 		}
-	},
-	
-	ready: function(cb) {
-		if (cb) {
-			if (this._ready) cb.call(this);
-			else this._ready_queue.push(cb.bind(this));
-		}
-		else {
-			this._ready = true;
-			while (this._ready_queue[0]) this._ready_queue.shift()();
-		}
 	}
-});
-
-GL.Container = GL.Base.extend(function() {
-	this.children = [];
-	this.children_keys = {};
-	this.class_name = 'Container';
-}, {
-	
-	add: function(child) {
-		child.id || (child.id = GL.util.generate_id());
-		child.parent = this;
-		this.children.push(child);
-		this.children_keys[child.id] = this.children.length - 1;
-		child[this.class_name.toLowerCase()] = this;
-		if (this.parent) child[this.parent.class_name.toLowerCase()] = this.parent;
-	},
-	
-	remove: function(child) {
-		var id = typeof child === 'string' ? child : child.id,
-				index = this.children_keys[id];
-		this.children.splice(index, 1);
-		delete this.children_keys[id];
-		child[this.class_name.toLowerCase()] = null;
-		if (this.parent) child[this.parent.class_name.toLowerCase()] = null;
-	},
-	
-	each: function(iterator) {
-		for (var i = 0, len = this.children.length; i < len; i++) {
-			iterator.call(this, this.children[i], i, this.children);			
-		}
-	}
-});
-
-GL.Game = GL.Container.extend(function(config) {
-	config || (config = {});
-	this.class_name = 'Game';
-  this.el = typeof config.el === 'string' ? document.getElementById(config.el) : config.el;
-	this.height = config.height;
-	this.width = config.width;
-  this.timer = new GL.Timer(config.fps || 30);
-  this.paused = true;
-	this._bind();
-}, {
-  
-  stage: function(id, piece, Constructor) {
-    this._ensure_stage(id, Constructor).add(piece);
-  },
-  
-  start: function() {
-    this.paused = false;
-    this.tick();
-		this.ready();
-  },
-  
-  pause: function() {
-    this.paused = true;
-    this.timer.pause();
-  },
-  
-  tick: function() {
-
-    this.tick = function() {
-			if (this.paused) return;
-			this.publish('tick');
-			this.timer.get_frame(this.tick);
-		}.bind(this);
-		
-		this.tick();
-  },
-
-  _ensure_stage: function(id, Constructor) {
-
-    Constructor = Constructor || GL.Stage;
-
-    var stage = this.children[this.children_keys[id]];
-    if (!stage) { 
-      
-      var el = document.getElementById(id);
-      if (!el) {
-        el = document.createElement('canvas');
-        el.setAttribute('id', id);
-        el.height = this.height;
-        el.width = this.width;
-        this.el.appendChild(el);
-      }
-      
-      stage = new Constructor(el);
-			this.add(stage);
-    }
-    
-    return stage;
-  },
-
-	_bind: function() {
-		
-		var el = this.el,
-				events = [ 'click', 'mouseover', 'mouseout' ],
-				window_events = [ 'keydown', 'keyup', 'keypress' ],
-				self = this
-		
-		events.forEach(function(event) {
-			el.addEventListener(event, function(e) { self.publish(event, e); })
-		});
-		
-		window_events.forEach(function(event) {
-			window.addEventListener(event, function(e) { self.publish(event, e); })
-		});
-	}
-
-});
-
-GL.Stage = GL.Container.extend(function(el) {
-  this.el = el;
-  this.id = el.getAttribute('id');
-  this.ctx = el.getContext('2d');
-	this.class_name = 'Stage';	
-}, {});
-
-GL.Piece = GL.Base.extend(function() {
-	this.class_name = 'Piece';
-	this.ready(function() {
-		this.game.subscribe('tick', this.tick, this);
-	});	
-}, {
- 
-});
+};
 
 GL.Timer = function(ideal_fps) {
   this.ideal_fps = ideal_fps;
@@ -271,9 +171,9 @@ GL.Timer.prototype = {
   }
 };
 
-GL.Vector = function(set) {
-  this.x = set[0] || 0;
-  this.y = set[1] || 0;
+GL.Vector = function(x, y) {
+  this.x = x[0] || x.x || x || 0;
+  this.y = x[1] || x.y || y || 0;
 }
 
 GL.Vector.prototype = {
@@ -286,7 +186,7 @@ GL.Vector.prototype = {
 
   subtract: function(v) {
     this.x -= v.x;
-    this.y -= v.y;    
+    this.y -= v.y;        
     return this;    
   },
 
@@ -304,10 +204,6 @@ GL.Vector.prototype = {
     this.x *= -1;
     this.y *= -1;
   },
-
-	is_flat: function() {
-		return !this.x && !this.y;
-	},
 
   normalize: function() {
     var len = this.get_length();
@@ -327,36 +223,52 @@ GL.Vector.prototype = {
   },
 
   clone: function() {
-    return new GL.Vector([ this.x, this.y ]);
+    return new GL.Vector(this);
   },
+
+
+	is_empty: function() {
+		return this.x === 0 && this.y === 0;
+	},
 
   get_length: function() {
     return Math.sqrt(this.get_raw_length());
   },
 
-  get_raw_length: function() {
+  get_length_squared: function() {
     return this.x * this.x + this.y * this.y;
   },
   
-  get_distance_from: function(v) {
-    var diff = this.get_difference(v);
-    return diff.get_length();
-  },
-
   get_angle_to: function(v) {
     var diff = this.get_difference(v);
     return Math.atan2(diff.y, diff.x);
   },
   
-  get_own_angle: function() {
-    return (new GL.Vector(0, 0)).get_angle_to(this);
+  get_angle: function() {
+    return Math.atan2(this.y, this.x);
   },
   
   get_difference: function(v) {
-    return new GL.Vector(this.x - v.x, this.y - v.y);
+    return this.clone().subtract(v);
   },
   
   to_string: function() {
     return 'Vector: ' + this.x + ', ' + this.y;
   }
 };
+
+// ensure Object.create
+Object.create || (Object.create = function() {
+  var F = function() {};
+  return function(src) {
+    F.prototype = src;
+    return new F;
+  }
+}());
+
+// standardize requestAnimationFrame
+window.requestAnimationFrame = window.requestAnimationFrame || 
+                               window.webkitRequestAnimationFrame || 
+                               window.mozRequestAnimationFrame || 
+                               window.oRequestAnimationFrame || 
+                               window.msRequestAnimationFrame;
