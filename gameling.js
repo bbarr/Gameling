@@ -58,7 +58,10 @@ GL.events = {
 	}
 }
 
-GL.Game = function() {
+GL.Game = function(el, width, height) {
+  this.el = typeof el === 'string' ? document.getElementById(el) : el;
+  this.width = width;
+  this.height = height;
   this.stages = [];
   this.stage_keys = {};
 };
@@ -111,7 +114,8 @@ GL.Game.prototype = {
 
 GL.util.extend(GL.Game.prototype, GL.events);
 
-GL.Stage = function() {
+GL.Stage = function(el) {
+  this.el = el;
   this.actors = [];
   this.actor_keys = {};
 };
@@ -134,8 +138,9 @@ GL.Stage.protoype = {
 
 GL.util.extend(GL.Stage.prototype, GL.events);
 
-GL.Actor = function() {
+GL.Actor = function(config) {
   this.id = GL.util.generate_id();
+  
 };
 
 GL.Actor.prototype = {
