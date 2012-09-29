@@ -4,9 +4,9 @@
  *  @author Brendan Barr brendanbarr.web@gmail.com
  */
 
-var GL = {};
+var gl = this.gl = {};
 
-GL.util = {
+gl.util = {
 	
 	generate_id: function() {
 		var id = 0;
@@ -17,166 +17,202 @@ GL.util = {
 	
 	extend: function(to, from) {
 		for (var key in from) {
-      if (from.hasOwnProperty(key)) {
-        to[key] = from[key];
-      }
+      to[key] = from[key];
     }
 	}
 };
 
-GL.events = {
-  
-  _events: {},
+gl.Events = function() {
+  this.queues = {}; 
+};
 
-	subscribe: function(name, cb, scope) {
+gl.Events.prototype = {
+
+	on: function(name, cb, scope) {
 		cb.scope = scope || this;
-		(this._events[name] || (this._events[name] = [])).push(cb);
+		(this.queues[name] || (this.queues[name] = [])).push(cb);
 	},
 	
-	unsubscribe: function(name, cb) {
+	off: function(name, cb) {
 	  
-		var queue = this._events[name];
+		var queue = this.queues[name];
 		if (!queue) return;
 		
 		if (cb) {
 		  var index = queue.indexOf(cb);
-  		if (index > -1) queue.splice(index, 1); 
-		}
-		else {
-		  delete this._events[name];
+  		if (index > -1) {
+        queue.splice(index, 1); 
+        if (queue.length === 0) {
+          delete this.queues[name];
+        }
+      }
+		} else {
+		  delete this.queues[name];
 		}
 	},
 	
-	publish: function(name, data) {
+	fire: function(name, data) {
 		
-		var queue = this._events[name];
+		var queue = this.queues[name];
 		if (!queue) return;
 		
-		for (var i = 0, len = queue.length; i < len; i++) {
+    // dont cache this, in case something unbinds itself
+		for (var i = 0; i < queue.length; i++) {
 			queue[i].call(queue[i].scope, data);
 		}
 	}
-}
 
-GL.Game = function(el, width, height) {
-  this.el = typeof el === 'string' ? document.getElementById(el) : el;
-  this.width = width;
-  this.height = height;
-  this.stages = [];
-  this.stage_keys = {};
 };
 
-GL.Game.prototype = {
+// Simple inheritance helper
+gl.Constructor = function() {};
+gl.Constructor.include = function(obj) { gl.util.extend(this.prototype, obj); };
+gl.Constructor.mixin = gl.Constructor.prototype.mixin = function(obj) { gl.util.extend(this, obj); };
+gl.Constructor.extend = function(Constructor) {
+ 
+  var self = this;
+
+  var NewConstructor = function() {
+    self.apply(this, arguments);
+    if (Constructor) Constructor.apply(this, arguments);
+  };
   
-  stage: function(name) {
-    var stage = this.stages[this.stage_keys[name]];
-    if (!stage) {
-      stage = this._create_stage(name);
-      this.stage_keys[name] = this.stages.push(stage);
+  gl.util.extend(NewConstructor, this);
+  gl.util.extend(NewConstructor, Constructor.properties);
+  NewConstructor.Parent = this;
+
+  NewConstructor.prototype = Object.create(this.prototype);
+  gl.util.extend(NewConstructor.prototype, Constructor.prototype);
+  NewConstructor.prototype.Constructor = NewConstructor;
+
+  return NewConstructor;
+}
+
+gl.Collection = function(array) {
+  gl.Events.call(this);
+	this.array = array || [];
+}
+
+gl.Collection.prototype = {
+
+	add: function(item) {
+    item.id || (item.id = gl.util.generate_id());
+		this.array.push(item);
+		this.fire('added', item);
+	},
+
+	remove: function(item) {
+    var index = this.array.indexOf(item);
+		this.array.splice(index, 1);
+		this.fire('removed', item);
+	},
+
+  find: function(id) {
+    for (var i = 0, len = this.array.length; i < len; i++) {
+      if (this.array[i].id === id) return this.array[i];
     }
-    return stage;
   },
+
+	each: function(iterator, scope) {
+    scope = scope || this;
+		for (var i = 0, len = this.array.length; i < len; i++) {
+			if (iterator.call(scope, this.array[i], i, this.array) === false) {
+        break;
+      }
+		}
+	},
+
+  random: function() {
+    return this.array[Math.floor(Math.random() * this.array.length)];
+  }
+};
+
+gl.util.extend(gl.Collection.prototype, gl.Events.prototype);
+
+gl.Game = gl.Constructor.extend(gl.Events).extend(function() {
+  this.timer = new gl.Timer(30);
+});
+
+gl.Piece = gl.Constructor.extend(gl.Events).extend(function(config) {
+  this.id = gl.util.generate_id();
+  this.game = config.game;
+});
+
+gl.Timer = function(fps) {
+  gl.Events.call(this);
+  this.fps = fps;
+	this.smooth = fps >= 30;
+  this.interval = 1000 / fps;
+	this.coefficient = 1;
+  this.tick = this.tick.bind(this);
+};
+
+gl.Timer.prototype = {
   
+  every: function(num, one_time) {
+
+    var self = this;
+
+    function bind(time, cb, scope) {
+
+      var then = $.now(),
+          combined_cb = function() {
+            var now = $.now();
+            if (now - then > time) {
+              then = now;
+              cb.call(scope || this);
+              if (one_time) self.off('tick', combined_cb);
+            }
+          };
+
+      self.on('tick', combined_cb, this);
+    };
+
+    return {
+
+      seconds: function(cb, scope) {
+        bind(num * 1000, cb, scope);
+      },
+
+      minutes: function() {
+        bind(num * 60000, cb, scope);
+      }
+    }
+  },
+
+  after: function(num) {
+    return this.every(num, true);
+  },
+
+  tick: function() {
+    if (this.paused) return;
+    this.fire('tick', this);
+    this.get_frame(this.tick);
+  },
+
   run: function() {
     this.paused = false;
     this.tick();
   },
-  
-  stop: function() {
-    this.paused = true;
-  },
-  
-  _tick: function() {
-    
-    this._tick = function() {
-      if (this.paused) return;
-      for (var i = 0, len = this.stages.length; i < len; i++) this.stages[i].tick();
-      window.requestAnimationFrame(this._tick);
-    }.bind(this);
-    
-    this.tick();
-  },
-  
-  _create_stage: function(name) {
-    
-    var el = document.getElementById(id);
-    if (!el) {
-      el = document.createElement('canvas');
-      el.setAttribute('id', id);
-      el.height = this.height;
-      el.width = this.width;
-      this.el.appendChild(el);
-    }
 
-    return new Constructor(el);
-  }
-};
-
-GL.util.extend(GL.Game.prototype, GL.events);
-
-GL.Stage = function(el) {
-  this.el = el;
-  this.actors = [];
-  this.actor_keys = {};
-};
-
-GL.Stage.protoype = {
-  
-  tick: function() {
-    for (var i = 0, len = this.actors.length; i < len; i++) this.actors[i].tick();
-  },
-  
-  cast: function(actor) {
-    if (this.actor_keys[actor.id]) return;
-    this.actor_keys[actor.id] = this.actors.push(actor);
-  },
-  
-  actor: function(id) {
-    return this.actors[this.actor_keys[id]];
-  }
-};
-
-GL.util.extend(GL.Stage.prototype, GL.events);
-
-GL.Actor = function(config) {
-  this.id = GL.util.generate_id();
-  
-};
-
-GL.Actor.prototype = {
-  
-  tick: function() {}
-};
-
-GL.util.extend(GL.Actor.prototype, GL.events);
-
-GL.Timer = function(ideal_fps) {
-  this.ideal_fps = ideal_fps;
-	this.smooth = ideal_fps >= 30;
-  this.interval = 1000 / ideal_fps;
-	this.coefficient = 1;
-};
-
-GL.Timer.prototype = {
-  
   pause: function() {
     this.paused = true;
   },
   
 	get_frame: function(cb) {
-		this._process();
+		this.process();
 		if (this.smooth) {
 			window.requestAnimationFrame(cb)
 		}
 		else {
-			setTimeout(cb, this.interval * this.coeff);
+			setTimeout(cb, this.interval * this.coefficient);
 		}
 	},
 	
-	_process: function() {
+	process: function() {
     
     if (this.paused) {
-      this.coeff = 1;
+      this.coefficient = 1;
       return;
     }
     
@@ -185,16 +221,18 @@ GL.Timer.prototype = {
         fps = 1000 / elapsed;
 
     this.last_time = current_time;
-		this.coeff = Math.round(this.ideal_fps / fps * 100) / 100;
+		this.coefficient = Math.round(this.ideal_fps / fps * 100) / 100;
   }
 };
 
-GL.Vector = function(x, y) {
-  this.x = x[0] || x.x || x || 0;
-  this.y = x[1] || x.y || y || 0;
+gl.util.extend(gl.Timer.prototype, gl.Events.prototype);
+
+gl.Vector = function(x, y) {
+  this.x = x || 0;
+  this.y = y || 0;
 }
 
-GL.Vector.prototype = {
+gl.Vector.prototype = {
 
   add: function(v) {
     this.x += v.x;
@@ -241,9 +279,8 @@ GL.Vector.prototype = {
   },
 
   clone: function() {
-    return new GL.Vector(this);
+    return new gl.Vector(this.x, this.y);
   },
-
 
 	is_empty: function() {
 		return this.x === 0 && this.y === 0;
@@ -253,7 +290,7 @@ GL.Vector.prototype = {
     return Math.sqrt(this.get_raw_length());
   },
 
-  get_length_squared: function() {
+  get_raw_length: function() {
     return this.x * this.x + this.y * this.y;
   },
   
@@ -267,22 +304,17 @@ GL.Vector.prototype = {
   },
   
   get_difference: function(v) {
-    return this.clone().subtract(v);
+    return v.clone().subtract(this);
+  },
+
+  is_near: function(v) {
+    return this.get_difference(v).get_length() < 5;
   },
   
   to_string: function() {
     return 'Vector: ' + this.x + ', ' + this.y;
   }
 };
-
-// ensure Object.create
-Object.create || (Object.create = function() {
-  var F = function() {};
-  return function(src) {
-    F.prototype = src;
-    return new F;
-  }
-}());
 
 // standardize requestAnimationFrame
 window.requestAnimationFrame = window.requestAnimationFrame || 
